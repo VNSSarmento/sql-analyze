@@ -7,5 +7,8 @@ import (
 
 func main() {
 	bd := config.NewConn()
-	fmt.Println("Banco conectado com sucesso")
+
+	if bd != nil {
+		fmt.Println("Banco conectado com sucesso")
+	}
 }
