@@ -34,7 +34,7 @@ services:
       - redis_data:/data
 
   api:
-    container_name: servidor-go
+    container_name: construtor
 
     build:
       context: ..
