@@ -9,7 +9,7 @@ import (
 )
 
 func main() {
-	bd := config.NewConn()
+	bd := config.NewPostgresConn()
 	route := gin.Default()
 
 	if bd != nil {

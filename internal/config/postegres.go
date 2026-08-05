@@ -14,7 +14,7 @@ type Bd struct {
 	ConnPool *pgxpool.Pool
 }
 
-func NewConn() *Bd {
+func NewPostgresConn() *Bd {
 	ctx := context.Background()
 
 	err := godotenv.Load()
