@@ -7,21 +7,14 @@ import (
 	"os"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/joho/godotenv"
 )
 
 type Bd struct {
 	ConnPool *pgxpool.Pool
 }
 
-func NewConn() *Bd {
+func NewPostgresConn() *Bd {
 	ctx := context.Background()
-
-	err := godotenv.Load()
-
-	if err != nil {
-		log.Println("Aviso: .env não encontrado, seguindo com variáveis do ambiente")
-	}
 
 	host := os.Getenv("POSTGRES_HOST")
 	port := os.Getenv("POSTGRES_PORT")
