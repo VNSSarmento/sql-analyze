@@ -51,6 +51,26 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  migrate:
+    image: migrate/migrate:v4.17.0
+    container_name: migrate-sql_analyze
+    volumes:
+      - ../migrations:/migrations
+    env_file:
+      - ../.env
+    entrypoint: ["sh", "-c"]
+    command:
+      - >
+        migrate -path=/migrations
+        -database "postgres://$$POSTGRES_USER:$$POSTGRES_PASSWORD@db:$$POSTGRES_PORT/$$POSTGRES_DB?sslmode=$$POSTGRES_SSLMODE"
+        up
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
 
 volumes:
   postgres_data:
