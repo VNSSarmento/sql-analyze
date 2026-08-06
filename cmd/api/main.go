@@ -2,19 +2,35 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"sql-analyze/internal/config"
 
 	"github.com/gin-gonic/gin"
+	"github.com/joho/godotenv"
 )
 
 func main() {
+
+	err := godotenv.Load()
+
+	if err != nil {
+		log.Println("Aviso: .env não encontrado, seguindo com variáveis do ambiente")
+	}
+
 	bd := config.NewPostgresConn()
-	route := gin.Default()
 
 	if bd != nil {
 		fmt.Println("Banco conectado com sucesso")
 	}
+
+	redis := config.NewRedisConn()
+
+	if redis != nil {
+		fmt.Println("Redis conectado com sucesso")
+	}
+
+	route := gin.Default()
 
 	route.GET("/health", func(ctx *gin.Context) {
 		ctx.JSON(http.StatusOK, gin.H{"message": "tá batendo"})
