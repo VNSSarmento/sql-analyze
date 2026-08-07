@@ -13,3 +13,11 @@ type Query struct {
 	LastAnomalyAt   time.Time
 	CreatedAt       time.Time
 }
+
+type AnomalyAlert struct {
+	QueryID       int64
+	DBUser        string
+	CurrentTimeMs float64
+	ZScore        float64
+	DetectedAt    time.Time
+}
