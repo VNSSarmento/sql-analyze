@@ -3,7 +3,7 @@ package domain
 import "context"
 
 type QueryRepository interface {
-	GetByID(ctx context.Context, queryID int64, dbUser string) (*Query, error)
+	GetByID(ctx context.Context, queryID, dbUser string) (*Query, error)
 	Save(ctx context.Context, q *Query) error
 	GetTopSlowest(ctx context.Context, limit int) ([]*Query, error)
 }
