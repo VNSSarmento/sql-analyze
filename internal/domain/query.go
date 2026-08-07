@@ -15,7 +15,7 @@ type Query struct {
 }
 
 type AnomalyAlert struct {
-	QueryID       int64
+	QueryID       string
 	DBUser        string
 	CurrentTimeMs float64
 	ZScore        float64
