@@ -34,15 +34,20 @@ type ExecutionResult struct {
 func (q *Query) RegisterExecution(execMs float64) ExecutionResult {
 	now := time.Now()
 
-	result := ExecutionResult{IsAnomaly: false}
+	result := ExecutionResult{}
 
 	if q.ExecutionsCount >= 8 {
 		variance := q.M2 / float64(q.ExecutionsCount)
 		desvP := math.Sqrt(variance)
 
 		var zScore float64
-		if desvP != 0 {
-			zScore = (execMs - q.MeanTimeMs) / desvP
+
+		if desvP == 0 {
+			if execMs != q.MeanTimeMs {
+				result.IsAnomaly = true
+			} else {
+				zScore = (execMs - q.MeanTimeMs) / desvP
+			}
 		}
 
 		if math.Abs(zScore) > 3.0 {
@@ -50,12 +55,12 @@ func (q *Query) RegisterExecution(execMs float64) ExecutionResult {
 			result.ZScore = zScore
 			q.LastAnomalyAt = &now
 		}
+
 	}
 
 	q.ExecutionsCount++
-
 	delta1 := execMs - q.MeanTimeMs
-	q.MeanTimeMs += delta1 / float64(q.ExecutionsCount)
+	q.MeanTimeMs += delta1 / float64(q.ExecutionsCount-1)
 	delta2 := execMs - q.MeanTimeMs
 	q.M2 += delta1 * delta2
 
