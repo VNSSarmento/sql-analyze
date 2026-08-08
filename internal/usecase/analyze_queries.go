@@ -2,7 +2,6 @@ package usecase
 
 import (
 	"context"
-	"math"
 	"sql-analyze/internal/domain"
 	"time"
 )
@@ -12,10 +11,10 @@ type AnalyzeQueryUseCase struct {
 	pubAlert   domain.AlertPublisher
 }
 
-func NewAnalyzeQueryUseCase(repository domain.QueryRepository, publishe domain.AlertPublisher) *AnalyzeQueryUseCase {
+func NewAnalyzeQueryUseCase(repository domain.QueryRepository, publisher domain.AlertPublisher) *AnalyzeQueryUseCase {
 	return &AnalyzeQueryUseCase{
 		repository: repository,
-		pubAlert:   publishe,
+		pubAlert:   publisher,
 	}
 }
 func (a *AnalyzeQueryUseCase) Execute(ctx context.Context, queryID string, dbUser string, normalizedQuery string, executionTimeMs float64) error {
@@ -33,44 +32,21 @@ func (a *AnalyzeQueryUseCase) Execute(ctx context.Context, queryID string, dbUse
 
 	now := time.Now()
 
-	if query.ExecutionsCount >= 8 {
-		var zScore float64
+	result := query.RegisterExecution(executionTimeMs)
 
-		variance := query.M2 / float64(query.ExecutionsCount)
-		desvP := math.Sqrt(variance)
-
-		if desvP == 0 {
-			zScore = 0
-		} else {
-			zScore = (executionTimeMs - query.MeanTimeMs) / desvP
+	if result.IsAnomaly {
+		alert := &domain.AnomalyAlert{
+			QueryID:       query.QueryID,
+			DBUser:        query.DBUser,
+			CurrentTimeMs: executionTimeMs,
+			MeanTimeMs:    query.MeanTimeMs,
+			ZScore:        result.ZScore,
+			DetectedAt:    now,
 		}
-
-		if math.Abs(zScore) > 3.0 {
-			pubAlert := &domain.AnomalyAlert{
-				QueryID:       query.QueryID,
-				DBUser:        query.DBUser,
-				CurrentTimeMs: executionTimeMs,
-				ZScore:        zScore,
-				DetectedAt:    now,
-			}
-
-			_ = a.pubAlert.Publish(ctx, pubAlert)
-
-			query.LastAnomalyAt = &now
+		if err := a.pubAlert.Publish(ctx, alert); err != nil {
+			// decisão do ponto 6: por enquanto, pode só logar e seguir
 		}
 	}
-
-	query.ExecutionsCount++
-
-	delta1 := executionTimeMs - query.MeanTimeMs
-
-	query.MeanTimeMs += delta1 / float64(query.ExecutionsCount)
-
-	delta2 := executionTimeMs - query.MeanTimeMs
-
-	query.M2 += delta1 * delta2
-
-	query.LastExecutionAt = &now
 
 	err = a.repository.Save(ctx, query)
 	if err != nil {
