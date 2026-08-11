@@ -20,6 +20,8 @@ func NewAnalyzeQueryUseCase(repository domain.QueryRepository, publisher domain.
 	}
 }
 func (a *AnalyzeQueryUseCase) Execute(ctx context.Context, queryID string, dbUser string, normalizedQuery string, executionTimeMs float64) error {
+	now := time.Now()
+
 	query, err := a.repository.GetByID(ctx, queryID, dbUser)
 
 	if errors.Is(err, domain.ErrQueryNotFound) {
@@ -27,12 +29,11 @@ func (a *AnalyzeQueryUseCase) Execute(ctx context.Context, queryID string, dbUse
 			QueryID:         queryID,
 			DBUser:          dbUser,
 			NormalizedQuery: normalizedQuery,
+			CreatedAt:       now,
 		}
 	} else if err != nil {
 		return err
 	}
-
-	now := time.Now()
 
 	result := query.RegisterExecution(executionTimeMs)
 
