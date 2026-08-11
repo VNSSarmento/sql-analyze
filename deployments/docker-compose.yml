@@ -62,11 +62,11 @@ services:
     env_file:
       - ../.env
     entrypoint: ["sh", "-c"]
+
     command:
       - >
-        migrate -path=/migrations
-        -database "postgres://$$POSTGRES_USER:$$POSTGRES_PASSWORD@db:$$POSTGRES_PORT/$$POSTGRES_DB?sslmode=$$POSTGRES_SSLMODE"
-        up
+        migrate -path=/migrations -database "postgres://$$POSTGRES_USER:$$POSTGRES_PASSWORD@db:$$POSTGRES_PORT/$$POSTGRES_DB?sslmode=$$POSTGRES_SSLMODE" up
+
     depends_on:
       db:
         condition: service_healthy
