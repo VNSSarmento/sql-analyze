@@ -3,12 +3,14 @@ package redisadapter
 import (
 	"context"
 	"sql-analyze/internal/domain"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 )
 
-const stremName = "queries:alertas"
+const streamName = "queries:alertas"
+const groupName = "workers-alertas"
 
 type StreamAlertPublisher struct {
 	ClientAlert *redis.Client
@@ -22,7 +24,7 @@ func NewStreamAlertPublisher(client *redis.Client) *StreamAlertPublisher {
 
 func (p *StreamAlertPublisher) Publish(ctx context.Context, alert *domain.AnomalyAlert) error {
 	args := redis.XAddArgs{
-		Stream: stremName,
+		Stream: streamName,
 		Values: map[string]any{
 			"query_id":     alert.QueryID,
 			"db_user":      alert.DBUser,
@@ -34,4 +36,18 @@ func (p *StreamAlertPublisher) Publish(ctx context.Context, alert *domain.Anomal
 	}
 
 	return p.ClientAlert.XAdd(ctx, &args).Err()
+}
+
+func (p *StreamAlertPublisher) EnsureConsumerGroup(ctx context.Context) error {
+	result := p.ClientAlert.XGroupCreateMkStream(ctx, streamName, groupName, "$")
+	err := result.Err()
+
+	if err != nil {
+		if strings.Contains(err.Error(), "BUSYGROUP") {
+			return nil
+		} else {
+			return err
+		}
+	}
+	return nil
 }
