@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"sql-analyze/internal/adapter/redisAdapter"
+	redisadapter "sql-analyze/internal/adapter/redis_adapter"
 	"sql-analyze/internal/config"
 
 	"github.com/gin-gonic/gin"
@@ -26,7 +26,9 @@ func main() {
 	}
 
 	redisConn := config.NewRedisConn()
-	alertPublisher := redisAdapter.NewStreamAlertPublisher(redisConn.Client)
+	alertPublisher := redisadapter.NewStreamAlertPublisher(redisConn.Client)
+
+	fmt.Println(alertPublisher)
 
 	if redisConn != nil {
 		fmt.Println("Redis conectado com sucesso")
