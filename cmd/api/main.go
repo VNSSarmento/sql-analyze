@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
@@ -28,10 +29,8 @@ func main() {
 	redisConn := config.NewRedisConn()
 	alertPublisher := redisadapter.NewStreamAlertPublisher(redisConn.Client)
 
-	fmt.Println(alertPublisher)
-
-	if redisConn != nil {
-		fmt.Println("Redis conectado com sucesso")
+	if err := alertPublisher.EnsureConsumerGroup(context.Background()); err != nil {
+		log.Fatalf("Erro ao garantir consumer group: %v", err)
 	}
 
 	route := gin.Default()

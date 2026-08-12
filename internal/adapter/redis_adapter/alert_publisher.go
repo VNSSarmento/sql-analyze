@@ -42,12 +42,13 @@ func (p *StreamAlertPublisher) EnsureConsumerGroup(ctx context.Context) error {
 	result := p.ClientAlert.XGroupCreateMkStream(ctx, streamName, groupName, "$")
 	err := result.Err()
 
-	if err != nil {
-		if strings.Contains(err.Error(), "BUSYGROUP") {
-			return nil
-		} else {
-			return err
-		}
+	if err == nil {
+		return nil
 	}
-	return nil
+
+	if strings.Contains(err.Error(), "BUSYGROUP") {
+		return nil
+	}
+
+	return err
 }
