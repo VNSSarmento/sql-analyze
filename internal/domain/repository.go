@@ -1,6 +1,8 @@
 package domain
 
-import "context"
+import (
+	"context"
+)
 
 type QueryRepository interface {
 	GetByID(ctx context.Context, queryID, dbUser string) (*Query, error)
@@ -10,4 +12,9 @@ type QueryRepository interface {
 
 type AlertPublisher interface {
 	Publish(ctx context.Context, alert *AnomalyAlert) error
+}
+
+type QueryCache interface {
+	GetSlowest(ctx context.Context, limit int) []*Query
+	SetSlowest(ctx context.Context, limit int, queries []*Query) error
 }
