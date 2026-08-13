@@ -15,7 +15,7 @@ type QueryCacheAdapter struct {
 	client *redis.Client
 }
 
-func NewCacheQuery(client *redis.Client) *QueryCacheAdapter {
+func NewQueryCacheAdapter(client *redis.Client) *QueryCacheAdapter {
 	return &QueryCacheAdapter{
 		client: client,
 	}
@@ -24,7 +24,11 @@ func NewCacheQuery(client *redis.Client) *QueryCacheAdapter {
 func (c *QueryCacheAdapter) SetSlowest(ctx context.Context, limit int, queries []*domain.Query) error {
 	key := fmt.Sprintf("queries:slowest:%d", limit)
 
-	jsonBytes, _ := json.Marshal(queries)
+	jsonBytes, err := json.Marshal(queries)
+
+	if err != nil {
+		return fmt.Errorf("failed to marshal queries for cache: %w", err)
+	}
 
 	return c.client.Set(ctx, key, jsonBytes, time.Minute*1).Err()
 
