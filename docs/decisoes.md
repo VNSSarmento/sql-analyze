@@ -184,17 +184,17 @@ Campos: `id`, `query_id`, `db_user`, `normalized_query`, `executions_count`, `me
 3. ~~`config/redis.go` + Ping~~ ✅
 4. ~~Servidor HTTP vivo (`/health`)~~ ✅
 5. ~~Entidade `Query` desenhada conceitualmente~~ ✅
-6. ~~Migration da tabela `queries`~~ ✅ (rodando agora)
-7. Interface `QueryRepository` (contrato, sem implementação)
+6. ~~Migration da tabela `queries`~~ ✅
+7. ~~Interface `QueryRepository` (contrato, sem implementação)~~✅
 8. Tabela + mapeamento usuário → contato
-9. `usecase/` — orquestra domain + repository
-10. `adapter/postgres/` — implementação real do repository
+9. ~~`usecase/` — orquestra domain + repository~~
+10. ~~`adapter/postgres/` — implementação real do repository~~
 11. `adapter/http/` — handlers Gin ligando rotas aos usecases
-12. `adapter/redis/` — cache do endpoint + produtor do stream
+12. ~~`adapter/redis/` — cache do endpoint + produtor do stream~~
 13. `adapter/worker/` — coletor (lê `pg_stat_statements`) + consumidor de alertas (`XREADGROUP`) + "faxineiro" de pendências (`XPENDING`/`XCLAIM`)
 14. Testes unitários (domain/usecase) + integração (`testcontainers-go` para Postgres)
 15. `golangci-lint` configurado
-16. `.github/workflows/ci.yml` — lint → testes → build da imagem Docker
+16. ~~`.github/workflows/ci.yml` — lint → testes → build da imagem Docker~~
 17. Graceful shutdown (`SIGTERM`/`SIGINT` fechando pool/client antes de encerrar)
 18. README com diagrama de arquitetura + decisões documentadas (reaproveitar as justificativas deste guia)
 
