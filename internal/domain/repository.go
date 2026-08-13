@@ -15,6 +15,6 @@ type AlertPublisher interface {
 }
 
 type QueryCache interface {
-	GetSlowest(ctx context.Context, limit int) []*Query
+	GetSlowest(ctx context.Context, limit int) ([]*Query, error)
 	SetSlowest(ctx context.Context, limit int, queries []*Query) error
 }
