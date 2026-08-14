@@ -64,18 +64,10 @@ func (c *Collector) collectOnce(ctx context.Context) {
 
 		prevSnapshot, exist := c.snapshots[key]
 
-		if !exist {
-			c.snapshots[key] = statSnapshot{
-				calls:           currentCalls,
-				totalExecTimeMs: currentTotalTime,
-			}
-			continue
-		}
-
 		callDelta := currentCalls - prevSnapshot.calls
 		timeDelta := currentTotalTime - prevSnapshot.totalExecTimeMs
 
-		if callDelta <= 0 {
+		if !exist || callDelta <= 0 {
 			c.snapshots[key] = statSnapshot{
 				calls:           currentCalls,
 				totalExecTimeMs: currentTotalTime,
