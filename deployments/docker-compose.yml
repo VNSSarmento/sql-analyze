@@ -2,6 +2,7 @@ services:
   db:
     image: postgres:15-alpine
     container_name: postgres-sql_analyze
+    command: postgres -c shared_preload_libraries=pg_stat_statements
 
     env_file:
       - ../.env

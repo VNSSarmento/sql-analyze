@@ -154,6 +154,8 @@ Um threshold fixo (ex: "alerta se > 500ms") trata igual uma query que sempre foi
 ### Algoritmo: Welford's online + z-score
 - Atualiza média (`meanMs`) e variância (via `m2`) de forma incremental, **sem guardar histórico bruto de execuções** — só 3 números por query: `n`, `meanMs`, `m2`.
 - Para cada nova execução: **primeiro calcula o z-score contra o estado anterior**, decide se é anomalia, **só depois** atualiza as estatísticas com o novo valor. (Se atualizasse antes, a execução "amorteceria" a própria detecção.)
+- **Variância usa `n-1` (amostral, correção de Bessel)**, não `n` (populacional) — decisão consciente por causa do `n_min=8` baixo: com poucas amostras, a correção evita subestimar a variância real. **Atenção:** esse `-1` entra **só** no cálculo da variância pro z-score. A atualização da média do Welford's continua dividindo por `n` (o contador já incrementado) — são fórmulas independentes; usar `n-1` na média por engano quebra o algoritmo silenciosamente (bug real que já caímos aqui).
+- **Caso especial: desvio padrão = 0** (todas as execuções anteriores foram idênticas). Sem tratamento, isso "mascara" a anomalia mais óbvia possível (query que sempre foi estável e mudou). Tratamento adotado: se `desvP == 0` e a nova execução for diferente da média, marca anomalia direto, sem calcular z-score (não existe z-score matematicamente válido sem desvio padrão — fica `0` nesse caso específico, é uma limitação documentada, não um bug).
 
 ### Parâmetros fechados
 | Parâmetro | Valor | Motivo |
@@ -170,31 +172,74 @@ Chave é o par **(query_id, db_user)**, não só `query_id` — porque cada anal
 ### Schema aplicado (migration `000001_create_queries_table`)
 Campos: `id`, `query_id`, `db_user`, `normalized_query`, `executions_count`, `mean_time_ms`, `m2`, `last_execution_at`, `last_anomaly_at`, `created_at`, com `UNIQUE (query_id, db_user)`.
 
+### Payload do alerta (`AnomalyAlert`)
+Campos fechados: `QueryID`, `DBUser`, `CurrentTimeMs`, `MeanTimeMs` (adicionado depois — permite ao worker consumidor montar mensagem tipo "rodou em Xms, quando a média é Yms" sem precisar consultar o banco de novo), `ZScore`, `DetectedAt`.
+
+**Cuidado de nome:** usar `DBUser` (maiúsculo em "DB", seguindo convenção Go de siglas) em **todas** as structs do domínio — já caímos na inconsistência de ter `DbUser` numa struct e `DBUser` em outra.
+
+### Rich Domain Model — o nome correto pro padrão aplicado
+O projeto usa **Clean/Hexagonal Architecture** com um **rich domain model** (regra de negócio como método da entidade — `Query.RegisterExecution`), não "DDD completo". DDD é um guarda-chuva maior (ubiquitous language, bounded contexts, aggregates, value objects, domain events) que o projeto não implementa formalmente, e não precisa. Frase defensável pra entrevista: *"Apliquei Clean Architecture com um domain model rico, onde as regras de negócio vivem como métodos da própria entidade, não espalhadas nos usecases."*
+
 ### Em aberto — ainda não modelado
 - Tabela/mapeamento de **usuário do banco → contato real** (e-mail/Slack), pra notificar quem ainda não otimizou a query. `pg_stat_statements` dá o usuário do Postgres, não o contato — isso precisa de cadastro próprio.
-- Interface `QueryRepository` (métodos que o adapter Postgres vai implementar).
-- Entidade/config de alerta (se threshold vira relativo por completo, ou convive com algum valor absoluto de fallback).
+- Entidade/config de alerta (se threshold vira relativo por completo, ou convive com algum valor absoluto de fallback) — hoje o threshold é 100% relativo (z-score), sem fallback absoluto implementado.
+- Como o **worker coletor** vai obter `executionTimeMs` na prática: `pg_stat_statements` só guarda agregados cumulativos (`calls`, `total_exec_time`), não execuções individuais. O coletor precisa guardar um snapshot da leitura anterior e calcular o delta a cada ciclo (`novoTempo = total_exec_time_agora - total_exec_time_anterior`, dividido pela diferença de `calls`). Também precisa resolver `db_user` via join com `pg_roles` (o `pg_stat_statements` só dá o `userid`, um OID).
 
 ---
 
-## 7. Roteiro do que falta (ordem sugerida)
+## 7. Camadas implementadas — usecase e adapters
+
+### `usecase.AnalyzeQueryUseCase.Execute` — orquestração
+Recebe `queryID`, `dbUser`, `normalizedQuery`, `executionTimeMs`. Fluxo: busca a query (`GetByID`) → se `ErrQueryNotFound`, monta uma nova → chama `query.RegisterExecution(executionTimeMs)` (todo o cálculo mora aí, o usecase não conhece Welford's nem z-score) → se `result.IsAnomaly`, monta `AnomalyAlert` e publica (erro do `Publish` só loga, não aborta — decisão consciente, perder um alerta pontual é menos grave que perder o dado estatístico) → `Save` no repository (esse erro sim aborta o `Execute`).
+
+### `adapter/postgres.PostgresQueryRepository` — implementação real do `QueryRepository`
+- **Upsert com `ON CONFLICT (query_id, db_user) DO UPDATE`** — evita condição de corrida entre "checar se existe" e "decidir inserir vs atualizar"; uma operação atômica só.
+- **`Scan` exige ponteiros** (`&query.Campo`, não `query.Campo`) — passar valor em vez de endereço compila mas falha em runtime, silenciosamente, com erro genérico (não trava em tempo de compilação porque `Scan` aceita `...any`).
+- **Contagem de colunas do SELECT precisa bater exatamente com a contagem de destinos do Scan** — o `id` (BIGSERIAL, chave técnica) foi tirado do SELECT porque o domínio não carrega esse campo (identidade real é `query_id`+`db_user`).
+- **`pgx.ErrNoRows` → traduzido pra `domain.ErrQueryNotFound`** via `errors.Is` — é assim que o usecase distingue "não existe ainda" de "erro de banco de verdade".
+- **Campos `*time.Time` nullable** (`LastAnomalyAt`) recebem `&query.Campo` normalmente — o `pgx` aloca automaticamente se não for `NULL`, deixa `nil` se for.
+- **Sempre checar `rows.Err()` depois do loop `for rows.Next()`** — `Next()` devolve `false` tanto por "acabaram as linhas" quanto por "erro no meio do streaming"; sem o `rows.Err()` esses dois casos ficam indistinguíveis.
+
+### `adapter/redis.StreamAlertPublisher` — implementação do `AlertPublisher`
+- `Values` do `redis.XAddArgs` aceita `map[string]any` (o `any` é alias de `interface{}`, mesma coisa, mais idiomático desde Go 1.18).
+- Timestamps (`DetectedAt`) precisam ser convertidos pra string antes de entrar no map — Redis não serializa `time.Time` sozinho. Usar `time.RFC3339` (data + hora + timezone), nunca um formato só-data — sem throttle de alertas, vários alertas da mesma query no mesmo dia ficariam indistinguíveis com formato só-data.
+- **`EnsureConsumerGroup`** (roda uma vez, no `main.go`, na subida): usa `XGroupCreateMkStream` (não `XGroupCreate` simples) — o sufixo `MkStream` cria o stream também, caso ainda não exista nenhuma mensagem publicada. Erro `BUSYGROUP` (grupo já existe, de uma subida anterior) precisa virar `nil` no `return` — tratar como erro de verdade quebraria a aplicação em todo restart depois do primeiro.
+
+### `adapter/redis.QueryCacheAdapter` — implementação do `QueryCache`
+- Padrão **cache-aside**: leitura pergunta ao cache primeiro; se `miss`, busca no Postgres e popula o cache antes de devolver.
+- Chave inclui o `limit` (`queries:slowest:10` ≠ `queries:slowest:50`) — senão pedidos com limites diferentes se sobrescrevem.
+- Serialização via `json.Marshal`/`json.Unmarshal` — Redis só entende texto/bytes, não structs Go.
+- `redis.Nil` → traduzido pra `domain.ErrCacheMiss` (erro sentinela próprio, paralelo ao `ErrQueryNotFound`) — cache miss é rotina, não deveria se misturar com "Redis está fora do ar".
+- TTL curto (1 minuto) — o coletor atualiza os dados constantemente por trás; cache "velho" mostraria números defasados.
+- **Ainda falta**: o usecase que orquestra esse cache-aside (`ListSlowestQueriesUseCase` ou nome similar) — hoje só a peça de infraestrutura existe, a lógica de "tenta cache, senão busca banco, populate" ainda não foi escrita.
+
+### Lições gerais de Go que apareceram repetidas vezes nos adapters
+- **Nunca descartar erro com `_`** — mesmo em casos que "raramente falham" (ex: `json.Marshal`). O linter `errcheck` (parte do `golangci-lint`) pega isso.
+- **Nome de método precisa bater exatamente com a interface** — não existe "quase implementa" em Go. `Publisher` ≠ `Publish`, `GetById` ≠ `GetByID`. O compilador só reclama na hora de *usar* o struct onde a interface é esperada, não na definição do struct isolado — por isso esses erros passam despercebidos até mais tarde.
+- **Siglas em nomes de campo/método são maiúsculas inteiras**: `ID`, `DB`, não `Id`, `Db`.
+- **Nome de pacote é sempre minúsculo, sem camelCase** (`redisadapter`, não `redisAdapter`).
+- **Mensagens de erro começam com letra minúscula** (convenção `golangci-lint`/`revive`).
+
+---
+
+## 8. Roteiro do que falta (ordem sugerida)
 
 1. ~~`main.go` mínimo (builda)~~ ✅
 2. ~~`config/postgres.go` + Ping~~ ✅
 3. ~~`config/redis.go` + Ping~~ ✅
 4. ~~Servidor HTTP vivo (`/health`)~~ ✅
 5. ~~Entidade `Query` desenhada conceitualmente~~ ✅
-6. ~~Migration da tabela `queries`~~ ✅
-7. ~~Interface `QueryRepository` (contrato, sem implementação)~~✅
+6. ~~Migration da tabela `queries`~~ ✅ (rodando agora)
+7. Interface `QueryRepository` (contrato, sem implementação)
 8. Tabela + mapeamento usuário → contato
-9. ~~`usecase/` — orquestra domain + repository~~
-10. ~~`adapter/postgres/` — implementação real do repository~~
+9. `usecase/` — orquestra domain + repository
+10. `adapter/postgres/` — implementação real do repository
 11. `adapter/http/` — handlers Gin ligando rotas aos usecases
-12. ~~`adapter/redis/` — cache do endpoint + produtor do stream~~
+12. `adapter/redis/` — cache do endpoint + produtor do stream
 13. `adapter/worker/` — coletor (lê `pg_stat_statements`) + consumidor de alertas (`XREADGROUP`) + "faxineiro" de pendências (`XPENDING`/`XCLAIM`)
 14. Testes unitários (domain/usecase) + integração (`testcontainers-go` para Postgres)
 15. `golangci-lint` configurado
-16. ~~`.github/workflows/ci.yml` — lint → testes → build da imagem Docker~~
+16. `.github/workflows/ci.yml` — lint → testes → build da imagem Docker
 17. Graceful shutdown (`SIGTERM`/`SIGINT` fechando pool/client antes de encerrar)
 18. README com diagrama de arquitetura + decisões documentadas (reaproveitar as justificativas deste guia)
 
