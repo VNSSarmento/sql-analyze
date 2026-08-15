@@ -41,6 +41,13 @@ func (c *Collector) collectOnce(ctx context.Context) {
 		log.Printf("erro ao executar query no pg_stat_statements: %v", err)
 		return
 	}
+
+	err = rows.Err()
+
+	if err != nil {
+		log.Printf("erro ao iterar resultados do pg_stat_statements: %v", err)
+	}
+
 	defer rows.Close()
 
 	for rows.Next() {
@@ -82,7 +89,7 @@ func (c *Collector) collectOnce(ctx context.Context) {
 			log.Printf("work error: %v", err)
 		}
 
-		c.snapshots[key] = statSnapshot{calls: callDelta, totalExecTimeMs: timeDelta}
+		c.snapshots[key] = statSnapshot{calls: callDelta, totalExecTimeMs: currentTotalTime}
 
 	}
 }
