@@ -19,6 +19,7 @@ func NewAnalyzeQueryUseCase(repository domain.QueryRepository, publisher domain.
 		pubAlert:   publisher,
 	}
 }
+
 func (a *AnalyzeQueryUseCase) Execute(ctx context.Context, queryID string, dbUser string, normalizedQuery string, executionTimeMs float64) error {
 	now := time.Now()
 
