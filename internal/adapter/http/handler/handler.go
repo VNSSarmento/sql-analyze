@@ -1,4 +1,4 @@
-package http
+package handler
 
 import (
 	"net/http"
@@ -32,13 +32,13 @@ func (h *Handler) GetSlowestQueries(ctx *gin.Context) {
 	} else {
 		limitInt, err := strconv.Atoi(limitString)
 
-		if limitInt <= 0 {
-			ctx.JSON(http.StatusBadRequest, gin.H{"error": "O parâmetro limit deve ser maior que zero"})
+		if err != nil {
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": "O parâmetro limit deve ser um número válido"})
 			return
 		}
 
-		if err != nil {
-			ctx.JSON(http.StatusBadRequest, gin.H{"error": "O parâmetro limit deve ser um número válido"})
+		if limitInt <= 0 {
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": "O parâmetro limit deve ser maior que zero"})
 			return
 		}
 
