@@ -2,9 +2,9 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"net/http"
+	"sql-analyze/internal/adapter/http/handler"
 	"sql-analyze/internal/adapter/postgres"
 	redisadapter "sql-analyze/internal/adapter/redis_adapter"
 	"sql-analyze/internal/adapter/worker"
@@ -25,11 +25,8 @@ func main() {
 	}
 
 	bd := config.NewPostgresConn()
-	if bd != nil {
-		fmt.Println("Banco conectado com sucesso")
-	}
-
 	redisConn := config.NewRedisConn()
+
 	alertPublisher := redisadapter.NewStreamAlertPublisher(redisConn.Client)
 
 	if err := alertPublisher.EnsureConsumerGroup(ctx); err != nil {
@@ -38,6 +35,9 @@ func main() {
 
 	repository := postgres.NewPostgresQueryRepository(bd.ConnPool)
 	analyzeUseCase := usecase.NewAnalyzeQueryUseCase(repository, alertPublisher)
+	queryCache := redisadapter.NewQueryCacheAdapter(redisConn.Client)
+	listSlowerUseCase := usecase.NewListSlowestQueriesUseCase(repository, queryCache)
+	h := handler.NewHandler(analyzeUseCase, listSlowerUseCase)
 
 	collector := worker.NewCollector(bd.ConnPool, analyzeUseCase, collectInterval)
 	go collector.Start(ctx)
@@ -47,6 +47,8 @@ func main() {
 	route.GET("/health", func(ctx *gin.Context) {
 		ctx.JSON(http.StatusOK, gin.H{"message": "tá batendo"})
 	})
+
+	route.GET("/queries/slowest", h.GetSlowestQueries)
 
 	route.Run()
 }

@@ -1,4 +1,4 @@
-package http
+package handler
 
 import (
 	"sql-analyze/internal/domain"
@@ -9,10 +9,10 @@ type SlowQueryResponse struct {
 	QueryID         string     `json:"query_id"`
 	DBUser          string     `json:"db_user"`
 	NormalizedQuery string     `json:"normalized_query"`
-	ExecutionsCount int64      `json:"executions_count"`
+	ExecutionsCount int64      `json:"execution_count"`
 	MeanTimeMs      float64    `json:"mean_time_ms"`
 	M2              float64    `json:"m2"`
-	LastExecutionAt *time.Time `json:"last_executions_at"`
+	LastExecutionAt *time.Time `json:"last_execution_at"`
 	LastAnomalyAt   *time.Time `json:"last_anomaly_at"`
 	CreatedAt       time.Time  `json:"created_at"`
 }
