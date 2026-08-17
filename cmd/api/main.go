@@ -17,18 +17,14 @@ import (
 )
 
 func main() {
-
-	err := godotenv.Load()
-
-	if err != nil {
-		log.Println("Aviso: .env não encontrado, seguindo com variáveis do ambiente")
-	}
-
 	ctx := context.Background()
 	collectInterval := time.Minute * 2
 
-	bd := config.NewPostgresConn()
+	if err := godotenv.Load(); err != nil {
+		log.Println("Aviso: .env não encontrado, seguindo com variáveis do ambiente")
+	}
 
+	bd := config.NewPostgresConn()
 	if bd != nil {
 		fmt.Println("Banco conectado com sucesso")
 	}
@@ -41,12 +37,10 @@ func main() {
 	}
 
 	repository := postgres.NewPostgresQueryRepository(bd.ConnPool)
+	analyzeUseCase := usecase.NewAnalyzeQueryUseCase(repository, alertPublisher)
 
-	usecase := usecase.NewAnalyzeQueryUseCase(repository, alertPublisher)
-
-	collectorWorker := worker.NewCollector(bd.ConnPool, usecase, collectInterval)
-
-	go collectorWorker.Start(ctx)
+	collector := worker.NewCollector(bd.ConnPool, analyzeUseCase, collectInterval)
+	go collector.Start(ctx)
 
 	route := gin.Default()
 
