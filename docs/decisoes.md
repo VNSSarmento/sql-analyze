@@ -183,7 +183,6 @@ O projeto usa **Clean/Hexagonal Architecture** com um **rich domain model** (reg
 ### Em aberto — ainda não modelado
 - Tabela/mapeamento de **usuário do banco → contato real** (e-mail/Slack), pra notificar quem ainda não otimizou a query. `pg_stat_statements` dá o usuário do Postgres, não o contato — isso precisa de cadastro próprio.
 - Entidade/config de alerta (se threshold vira relativo por completo, ou convive com algum valor absoluto de fallback) — hoje o threshold é 100% relativo (z-score), sem fallback absoluto implementado.
-- Como o **worker coletor** vai obter `executionTimeMs` na prática: `pg_stat_statements` só guarda agregados cumulativos (`calls`, `total_exec_time`), não execuções individuais. O coletor precisa guardar um snapshot da leitura anterior e calcular o delta a cada ciclo (`novoTempo = total_exec_time_agora - total_exec_time_anterior`, dividido pela diferença de `calls`). Também precisa resolver `db_user` via join com `pg_roles` (o `pg_stat_statements` só dá o `userid`, um OID).
 
 ---
 
@@ -211,7 +210,31 @@ Recebe `queryID`, `dbUser`, `normalizedQuery`, `executionTimeMs`. Fluxo: busca a
 - Serialização via `json.Marshal`/`json.Unmarshal` — Redis só entende texto/bytes, não structs Go.
 - `redis.Nil` → traduzido pra `domain.ErrCacheMiss` (erro sentinela próprio, paralelo ao `ErrQueryNotFound`) — cache miss é rotina, não deveria se misturar com "Redis está fora do ar".
 - TTL curto (1 minuto) — o coletor atualiza os dados constantemente por trás; cache "velho" mostraria números defasados.
-- **Ainda falta**: o usecase que orquestra esse cache-aside (`ListSlowestQueriesUseCase` ou nome similar) — hoje só a peça de infraestrutura existe, a lógica de "tenta cache, senão busca banco, populate" ainda não foi escrita.
+
+### `usecase.ListSlowestQueriesUseCase.Execute` — orquestra o cache-aside
+- Tenta `cache.GetSlowest` primeiro. Se `err == nil`, devolve direto — nem toca no Postgres.
+- **Graceful degradation:** tanto `ErrCacheMiss` quanto qualquer outro erro do Redis (indisponível, timeout) caem no mesmo caminho — busca no Postgres. A diferença é só que erro "de verdade" é logado (miss é rotina, não precisa logar). Cache nunca deveria ser ponto único de falha pra uma leitura.
+- Erro do `repository.GetTopSlowest` **sim** aborta (não tem mais fallback depois do Postgres).
+- Repopular o cache (`cache.SetSlowest`) é **best-effort** — erro aí só loga, não impede devolver os dados já buscados.
+
+### `adapter/worker.Collector` — coletor de `pg_stat_statements`
+- **Pré-requisito de infra:** `pg_stat_statements` não vem ativo por padrão. Precisa de `shared_preload_libraries=pg_stat_statements` no `command:` do serviço `db` no compose (só funciona com o container recriado, `--force-recreate`, porque é lido na inicialização do processo) **+** `CREATE EXTENSION IF NOT EXISTS pg_stat_statements;` dentro do banco.
+- **Snapshot em memória** (`map[string]statSnapshot`, chave `queryID:dbUser`) guarda os valores **cumulativos atuais** de cada leitura — não o delta. Servem só de "ponto de comparação" pra próxima rodada.
+- **Sem mutex necessário** — uma goroutine só, um `time.Ticker`, processamento sequencial.
+- **`pg_stat_statements` já normaliza o texto da query nativamente** (troca literais por `$1`, `$2`...) — o campo vem pronto, sem processamento extra.
+- Três desfechos por linha lida: **(1) primeira vez vista** → só grava snapshot, não chama `Execute`; **(2) delta de `calls` ≤ 0** (nada novo, ou reset de estatísticas/restart do Postgres) → só atualiza snapshot; **(3) delta > 0** → calcula `avgTimeMs = timeDelta / callsDelta`, chama `analyzeUseCase.Execute`, atualiza snapshot.
+- **Limitação conhecida:** snapshots vivem só em memória — todo restart da aplicação "esquece" o histórico de comparação, e a primeira leitura de cada query pós-restart não gera análise (some sem gerar delta), só recomeça o baseline.
+- **Achado em produção (self-referência):** o próprio `SELECT` do coletor contra `pg_stat_statements`, e o `INSERT ... ON CONFLICT` do `Save`, aparecem como queries monitoradas — a ferramenta se autoexamina. Sem filtro, isso polui o "top mais lentas" com ruído interno. Ainda não filtrado — opções: excluir por texto da query (`LIKE '%pg_stat_statements%'`), ou por role de usuário (excluir o usuário técnico da aplicação). Baixa prioridade enquanto só um usuário (`admin`) usa o sistema.
+- `Start(ctx)` roda `time.Ticker` + `select` com `ctx.Done()` — permite parar o laço de forma limpa quando o graceful shutdown for implementado.
+
+### `adapter/http` — handler + DTO
+- **DTO (`SlowQueryResponse`) separado da entidade `domain.Query`** — decisão consciente (Opção B, mais rigorosa) pra não vazar tags `json:` pro domínio. `mapToSlowQueryResponseList` faz a tradução.
+- **`LastExecutionAt` no DTO é `time.Time` puro; `LastAnomalyAt` é `*time.Time`** — espelha exatamente os tipos da entidade (o primeiro sempre preenchido, o segundo nullable).
+- **`limit` como query string (`?limit=10`), não path param** — path param representa identidade de recurso (`/queries/{id}`), query string representa modificador opcional sobre uma coleção. Também mais natural pra ter valor padrão e crescer com mais filtros no futuro (`offset`, `sort`) sem quebrar a URL.
+- Validação do `limit`: string vazia → default (10); não-numérico → `400`; `≤ 0` → `400`; acima do teto (100) → satura no teto, não erro.
+- `make([]SlowQueryResponse, len(...))` em vez de `var` — garante `[]` no JSON de resposta em vez de `null` quando a lista vem vazia.
+- Rota registrada via **method value** (`route.GET("/queries/slowest", h.GetSlowestQueries)`) — Go gera automaticamente a função "fechada" com o receiver já embutido, sem precisar de wrapper manual.
+- **Pendente:** handler de `GET /queries/{id}` (usaria `ctx.Param("id")`, diferente de `ctx.Query()`) ainda não escrito.
 
 ### Lições gerais de Go que apareceram repetidas vezes nos adapters
 - **Nunca descartar erro com `_`** — mesmo em casos que "raramente falham" (ex: `json.Marshal`). O linter `errcheck` (parte do `golangci-lint`) pega isso.
@@ -219,6 +242,7 @@ Recebe `queryID`, `dbUser`, `normalizedQuery`, `executionTimeMs`. Fluxo: busca a
 - **Siglas em nomes de campo/método são maiúsculas inteiras**: `ID`, `DB`, não `Id`, `Db`.
 - **Nome de pacote é sempre minúsculo, sem camelCase** (`redisadapter`, não `redisAdapter`).
 - **Mensagens de erro começam com letra minúscula** (convenção `golangci-lint`/`revive`).
+- **Variável local não deve ter o mesmo nome de um pacote importado** (*shadowing*) — `time := time.Minute`, `worker := worker.NewCollector(...)`, `handler := handler.NewHandler(...)` todos compilam, mas "escondem" o pacote a partir daquela linha; problema esperando acontecer se precisar usar o pacote de novo mais adiante na mesma função. Prefira nomes curtos alternativos (`h`, `collector`, `collectInterval`).
 
 ---
 
@@ -228,24 +252,30 @@ Recebe `queryID`, `dbUser`, `normalizedQuery`, `executionTimeMs`. Fluxo: busca a
 2. ~~`config/postgres.go` + Ping~~ ✅
 3. ~~`config/redis.go` + Ping~~ ✅
 4. ~~Servidor HTTP vivo (`/health`)~~ ✅
-5. ~~Entidade `Query` desenhada conceitualmente~~ ✅
-6. ~~Migration da tabela `queries`~~ ✅ (rodando agora)
-7. Interface `QueryRepository` (contrato, sem implementação)
-8. Tabela + mapeamento usuário → contato
-9. `usecase/` — orquestra domain + repository
-10. `adapter/postgres/` — implementação real do repository
-11. `adapter/http/` — handlers Gin ligando rotas aos usecases
-12. `adapter/redis/` — cache do endpoint + produtor do stream
-13. `adapter/worker/` — coletor (lê `pg_stat_statements`) + consumidor de alertas (`XREADGROUP`) + "faxineiro" de pendências (`XPENDING`/`XCLAIM`)
-14. Testes unitários (domain/usecase) + integração (`testcontainers-go` para Postgres)
-15. `golangci-lint` configurado
-16. `.github/workflows/ci.yml` — lint → testes → build da imagem Docker
-17. Graceful shutdown (`SIGTERM`/`SIGINT` fechando pool/client antes de encerrar)
-18. README com diagrama de arquitetura + decisões documentadas (reaproveitar as justificativas deste guia)
+5. ~~Entidade `Query` desenhada + `RegisterExecution` (Welford's/z-score) implementado~~ ✅
+6. ~~Migration da tabela `queries`~~ ✅
+7. ~~Interfaces `QueryRepository`, `AlertPublisher`, `QueryCache`~~ ✅
+8. ~~`usecase.AnalyzeQueryUseCase.Execute`~~ ✅
+9. ~~`adapter/postgres.PostgresQueryRepository`~~ ✅
+10. ~~`adapter/redis.StreamAlertPublisher` (produtor + `EnsureConsumerGroup`)~~ ✅
+11. ~~`adapter/redis.QueryCacheAdapter` (Set/Get)~~ ✅
+12. ~~`usecase.ListSlowestQueriesUseCase` (cache-aside)~~ ✅
+13. ~~Wire completo no `main.go`~~ ✅
+14. ~~`adapter/worker.Collector` (lê `pg_stat_statements`, calcula delta, chama `Execute`)~~ ✅
+15. ~~`adapter/http` — handler `GET /queries/slowest` + DTO~~ ✅ (testado e funcionando de ponta a ponta)
+16. Handler `GET /queries/{id}` — pendente, mesmo padrão do `/slowest` mas com `ctx.Param("id")`
+17. Filtro de auto-referência no coletor (excluir as próprias queries do sistema do resultado)
+18. `adapter/worker/` — consumidor de alertas (`XREADGROUP`) + "faxineiro" de pendências (`XPENDING`/`XCLAIM`) — ainda não iniciado
+19. Tabela + mapeamento usuário → contato (e-mail/Slack) — ainda em aberto conceitualmente
+20. Testes unitários (domain/usecase) + integração (`testcontainers-go` para Postgres)
+21. `golangci-lint` configurado
+22. `.github/workflows/ci.yml` — lint → testes → build da imagem Docker
+23. Graceful shutdown (`SIGTERM`/`SIGINT` fechando pool/client/coletor antes de encerrar)
+24. README com diagrama de arquitetura + decisões documentadas (reaproveitar as justificativas deste guia)
 
 ---
 
-## 8. Comandos do dia a dia
+## 9. Comandos do dia a dia
 
 ```bash
 # Subir tudo
@@ -278,7 +308,7 @@ docker exec -it redis-sql_analyze redis-cli
 
 ---
 
-## 9. Troubleshooting — lições aprendidas
+## 10. Troubleshooting — lições aprendidas
 
 ### Caso: migration reportava sucesso, mas a tabela não existia
 

@@ -35,9 +35,12 @@ func main() {
 
 	repository := postgres.NewPostgresQueryRepository(bd.ConnPool)
 	analyzeUseCase := usecase.NewAnalyzeQueryUseCase(repository, alertPublisher)
+
 	queryCache := redisadapter.NewQueryCacheAdapter(redisConn.Client)
 	listSlowerUseCase := usecase.NewListSlowestQueriesUseCase(repository, queryCache)
-	h := handler.NewHandler(analyzeUseCase, listSlowerUseCase)
+	getQueryUseCase := usecase.NewGetQueryUseCase(repository)
+
+	h := handler.NewHandler(analyzeUseCase, listSlowerUseCase, getQueryUseCase)
 
 	collector := worker.NewCollector(bd.ConnPool, analyzeUseCase, collectInterval)
 	go collector.Start(ctx)
