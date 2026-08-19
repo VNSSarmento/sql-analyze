@@ -9,8 +9,8 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-const streamName = "queries:alertas"
-const groupName = "workers-alertas"
+const StreamName = "queries:alertas"
+const GroupName = "workers-alertas"
 
 type StreamAlertPublisher struct {
 	ClientAlert *redis.Client
@@ -24,7 +24,7 @@ func NewStreamAlertPublisher(client *redis.Client) *StreamAlertPublisher {
 
 func (p *StreamAlertPublisher) Publish(ctx context.Context, alert *domain.AnomalyAlert) error {
 	args := redis.XAddArgs{
-		Stream: streamName,
+		Stream: StreamName,
 		Values: map[string]any{
 			"query_id":     alert.QueryID,
 			"db_user":      alert.DBUser,
@@ -39,7 +39,7 @@ func (p *StreamAlertPublisher) Publish(ctx context.Context, alert *domain.Anomal
 }
 
 func (p *StreamAlertPublisher) EnsureConsumerGroup(ctx context.Context) error {
-	result := p.ClientAlert.XGroupCreateMkStream(ctx, streamName, groupName, "$")
+	result := p.ClientAlert.XGroupCreateMkStream(ctx, StreamName, GroupName, "$")
 	err := result.Err()
 
 	if err == nil {

@@ -38,7 +38,6 @@ func (c *QueryCacheAdapter) GetSlowest(ctx context.Context, limit int) ([]*domai
 	key := fmt.Sprintf("queries:slowest:%d", limit)
 
 	stringCmd := c.client.Get(ctx, key)
-
 	result, err := stringCmd.Result()
 
 	if errors.Is(err, redis.Nil) {

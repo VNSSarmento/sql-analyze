@@ -1,7 +1,9 @@
 package handler
 
 import (
+	"errors"
 	"net/http"
+	"sql-analyze/internal/domain"
 	"sql-analyze/internal/usecase"
 	"strconv"
 
@@ -9,14 +11,16 @@ import (
 )
 
 type Handler struct {
-	service     *usecase.AnalyzeQueryUseCase
-	listUseCase *usecase.ListSlowestQueriesUseCase
+	service         *usecase.AnalyzeQueryUseCase
+	listUseCase     *usecase.ListSlowestQueriesUseCase
+	getQueryUseCase *usecase.GetQueryUseCase
 }
 
-func NewHandler(analyzeUsecase *usecase.AnalyzeQueryUseCase, listSlowestQueriesUseCase *usecase.ListSlowestQueriesUseCase) *Handler {
+func NewHandler(analyzeUsecase *usecase.AnalyzeQueryUseCase, listSlowestQueriesUseCase *usecase.ListSlowestQueriesUseCase, getQueryUserCase *usecase.GetQueryUseCase) *Handler {
 	return &Handler{
-		service:     analyzeUsecase,
-		listUseCase: listSlowestQueriesUseCase,
+		service:         analyzeUsecase,
+		listUseCase:     listSlowestQueriesUseCase,
+		getQueryUseCase: getQueryUserCase,
 	}
 }
 
@@ -59,4 +63,26 @@ func (h *Handler) GetSlowestQueries(ctx *gin.Context) {
 	responseJson := mapToSlowQueryResponseList(domainQueries)
 
 	ctx.JSON(http.StatusOK, responseJson)
+}
+
+func (h *Handler) GetQueryById(ctx *gin.Context) {
+	queryID := ctx.Param("queryID")
+	dbUser := ctx.Param("dbUser")
+
+	query, err := h.getQueryUseCase.Execute(ctx, queryID, dbUser)
+
+	if errors.Is(err, domain.ErrQueryNotFound) {
+		ctx.JSON(http.StatusNotFound, gin.H{"error": "Não foi possivel localizar a query"})
+		return
+	}
+
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Erro interno"})
+		return
+	}
+
+	responseJson := mapToSlowQueryResponse(query)
+
+	ctx.JSON(http.StatusOK, responseJson)
+
 }
