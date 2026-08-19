@@ -37,19 +37,19 @@ func mapToSlowQueryResponseList(domainQueries []*domain.Query) []SlowQueryRespon
 
 }
 
-func mapToSlowQueryResponse(domainQueries *domain.Query) SlowQueryResponse {
+func mapToSlowQueryResponse(domainQuerie *domain.Query) SlowQueryResponse {
 
 	queriesJson := SlowQueryResponse{}
 
-	queriesJson.QueryID = domainQueries.QueryID
-	queriesJson.DBUser = domainQueries.DBUser
-	queriesJson.NormalizedQuery = domainQueries.NormalizedQuery
-	queriesJson.ExecutionsCount = domainQueries.ExecutionsCount
-	queriesJson.MeanTimeMs = domainQueries.MeanTimeMs
-	queriesJson.M2 = domainQueries.M2
-	queriesJson.LastExecutionAt = domainQueries.LastExecutionAt
-	queriesJson.LastAnomalyAt = domainQueries.LastAnomalyAt
-	queriesJson.CreatedAt = domainQueries.CreatedAt
+	queriesJson.QueryID = domainQuerie.QueryID
+	queriesJson.DBUser = domainQuerie.DBUser
+	queriesJson.NormalizedQuery = domainQuerie.NormalizedQuery
+	queriesJson.ExecutionsCount = domainQuerie.ExecutionsCount
+	queriesJson.MeanTimeMs = domainQuerie.MeanTimeMs
+	queriesJson.M2 = domainQuerie.M2
+	queriesJson.LastExecutionAt = domainQuerie.LastExecutionAt
+	queriesJson.LastAnomalyAt = domainQuerie.LastAnomalyAt
+	queriesJson.CreatedAt = domainQuerie.CreatedAt
 
 	return queriesJson
 

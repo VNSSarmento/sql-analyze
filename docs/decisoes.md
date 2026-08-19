@@ -262,8 +262,8 @@ Recebe `queryID`, `dbUser`, `normalizedQuery`, `executionTimeMs`. Fluxo: busca a
 12. ~~`usecase.ListSlowestQueriesUseCase` (cache-aside)~~ ✅
 13. ~~Wire completo no `main.go`~~ ✅
 14. ~~`adapter/worker.Collector` (lê `pg_stat_statements`, calcula delta, chama `Execute`)~~ ✅
-15. ~~`adapter/http` — handler `GET /queries/slowest` + DTO~~ ✅ (testado e funcionando de ponta a ponta)
-16. Handler `GET /queries/{id}` — pendente, mesmo padrão do `/slowest` mas com `ctx.Param("id")`
+15. ~~`adapter/http` — handler `GET /queries/slowest` + DTO~~ ✅
+16. ~~Handler `GET /queries/{id}` — pendente, mesmo padrão do `/slowest` mas com `ctx.Param("id")`~~
 17. Filtro de auto-referência no coletor (excluir as próprias queries do sistema do resultado)
 18. `adapter/worker/` — consumidor de alertas (`XREADGROUP`) + "faxineiro" de pendências (`XPENDING`/`XCLAIM`) — ainda não iniciado
 19. Tabela + mapeamento usuário → contato (e-mail/Slack) — ainda em aberto conceitualmente

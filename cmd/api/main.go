@@ -43,6 +43,7 @@ func main() {
 	h := handler.NewHandler(analyzeUseCase, listSlowerUseCase, getQueryUseCase)
 
 	collector := worker.NewCollector(bd.ConnPool, analyzeUseCase, collectInterval)
+
 	go collector.Start(ctx)
 
 	route := gin.Default()
@@ -52,6 +53,7 @@ func main() {
 	})
 
 	route.GET("/queries/slowest", h.GetSlowestQueries)
+	route.GET("/queries/:queryID/:dbUser", h.GetQueryById)
 
 	route.Run()
 }

@@ -33,8 +33,7 @@ func NewCollector(pool *pgxpool.Pool, analyzeUseCase *usecase.AnalyzeQueryUseCas
 
 func (c *Collector) collectOnce(ctx context.Context) {
 
-	sql := "SELECT pss.queryid::text, r.rolname AS db_user, pss.query AS normalized_query, pss.calls, pss.total_exec_time AS total_exec_time_ms FROM pg_stat_statements pss JOIN pg_roles r ON pss.userid = r.oid WHERE pss.calls > 0;"
-
+	sql := "SELECT pss.queryid::text, r.rolname AS db_user, pss.query AS normalized_query, pss.calls, pss.total_exec_time AS total_exec_time_ms FROM pg_stat_statements pss JOIN pg_roles r ON pss.userid = r.oid WHERE pss.calls > 0 AND pss.query NOT ILIKE '%pg_stat_statements%' AND pss.query NOT ILIKE '%INTO queries%';"
 	rows, err := c.pool.Query(ctx, sql)
 
 	if err != nil {
