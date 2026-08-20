@@ -33,7 +33,7 @@ func parseMapToAlert(values map[string]any) *redisadapter.AnomalyAlertResponse {
 		log.Printf("error na conversão: %v", err)
 	}
 
-	currentTimeMs, err := strconv.ParseFloat(fmt.Sprintf("%v", values["current_time"]), 64)
+	currentTimeMs, err := strconv.ParseFloat(fmt.Sprintf("%v", values["current_time_ms"]), 64)
 	if err != nil {
 		log.Printf("error na conversão: %v", err)
 	}
@@ -87,16 +87,39 @@ func (a *AlertConsumer) ConsumeNew(ctx context.Context) {
 
 	for _, stream := range streamsResult {
 		for _, message := range stream.Messages {
-			alert := parseMapToAlert(message.Values)
-
-			log.Printf("Alerta recebido da query: %s", alert.QueryID)
-
-			a.Client.XAck(ctx, redisadapter.StreamName, redisadapter.GroupName, message.ID).Err()
+			a.processMessage(ctx, message.ID, message.Values)
 		}
 	}
 }
 
+func (a *AlertConsumer) processMessage(ctx context.Context, messageID string, values map[string]any) {
+	alert := parseMapToAlert(values)
+	log.Printf("Alerta recebido da query: %s", alert.QueryID)
+
+	err := a.Client.XAck(ctx, redisadapter.StreamName, redisadapter.GroupName, messageID).Err()
+
+	if err != nil {
+		log.Printf("erro ao confirmar mensagem %s: %v", messageID, err)
+	}
+}
+
 func (a *AlertConsumer) Start(ctx context.Context) {
+	go a.runConsumeLoop(ctx)
+	go a.runCleanupLoop(ctx)
+}
+
+func (a *AlertConsumer) runConsumeLoop(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			a.ConsumeNew(ctx)
+		}
+	}
+}
+
+func (a *AlertConsumer) runCleanupLoop(ctx context.Context) {
 	ticker := time.NewTicker(time.Minute * 1)
 	defer ticker.Stop()
 
@@ -105,9 +128,28 @@ func (a *AlertConsumer) Start(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			log.Println("Rodando limpeza de alertas")
-		default:
-			a.ConsumeNew(ctx)
+			a.ReclaimStale(ctx)
 		}
+	}
+}
+
+func (a *AlertConsumer) ReclaimStale(ctx context.Context) {
+	args := redis.XAutoClaimArgs{
+		Stream:   redisadapter.StreamName,
+		Group:    redisadapter.GroupName,
+		Consumer: a.ConsumerName,
+		MinIdle:  a.MinIdleTime,
+		Start:    "0-0",
+		Count:    50,
+	}
+
+	messages, _, err := a.Client.XAutoClaim(ctx, &args).Result()
+
+	if err != nil {
+		log.Printf("erro ao verificar mensagem pendentes: %v", err)
+	}
+
+	for _, message := range messages {
+		a.processMessage(ctx, message.ID, message.Values)
 	}
 }
