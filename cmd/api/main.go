@@ -46,6 +46,10 @@ func main() {
 
 	go collector.Start(ctx)
 
+	alertConsumer := worker.NewAlertConsumer(redisConn.Client, "alert-consumer-1")
+
+	go alertConsumer.Start(ctx)
+
 	route := gin.Default()
 
 	route.GET("/health", func(ctx *gin.Context) {
