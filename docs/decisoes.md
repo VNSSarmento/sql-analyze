@@ -227,14 +227,32 @@ Recebe `queryID`, `dbUser`, `normalizedQuery`, `executionTimeMs`. Fluxo: busca a
 - **Achado em produção (self-referência):** o próprio `SELECT` do coletor contra `pg_stat_statements`, e o `INSERT ... ON CONFLICT` do `Save`, aparecem como queries monitoradas — a ferramenta se autoexamina. Sem filtro, isso polui o "top mais lentas" com ruído interno. Ainda não filtrado — opções: excluir por texto da query (`LIKE '%pg_stat_statements%'`), ou por role de usuário (excluir o usuário técnico da aplicação). Baixa prioridade enquanto só um usuário (`admin`) usa o sistema.
 - `Start(ctx)` roda `time.Ticker` + `select` com `ctx.Done()` — permite parar o laço de forma limpa quando o graceful shutdown for implementado.
 
+### `adapter/worker.AlertConsumer` — consumidor de alertas (Streams)
+- **Duas goroutines paralelas**, disparadas por `Start(ctx)`, sem competir entre si:
+  - `runConsumeLoop` — laço contínuo (`select` com `default`, sem ticker) chamando `ConsumeNew` → `XReadGroup` com `Streams: [..., ">"]`. O `Block: 2s` do próprio Redis já dá a pausa natural, sem precisar de `time.Sleep` nem ticker.
+  - `runCleanupLoop` — ticker de 1 minuto, chamando `ReclaimStale` → `XAutoClaim` com `MinIdle: 3min` — reivindica, num único comando atômico, mensagens entregues há mais de 3 minutos sem `XAck` (sinal de consumidor que travou/caiu).
+- **Convergência em `processMessage`**: os dois caminhos (mensagem nova ou reclamada) terminam na mesma função — `parseMapToAlert` (reconstrói o struct a partir do `map[string]any`) → log → `XAck`. Evita duplicar parse/confirmação em dois lugares.
+- **Bug real que já caímos: nome de chave do mapa não bate com o que foi gravado no `Publish`** (`values["current_time"]` em vez de `values["current_time_ms"]`) — gera `strconv.ParseFloat: parsing "<nil>"`, silencioso, sem quebrar o fluxo. Mesma categoria do `Publisher`≠`Publish` — strings de contrato entre produtor e consumidor não têm checagem do compilador; só aparece rodando de verdade.
+- **`XAck` sempre precisa ter o erro checado** (não só `_ =` ou ignorado) — se falhar, a mensagem continua na lista de pendentes mesmo já processada, e o `ReclaimStale` vai reentregar ela depois, gerando alerta duplicado.
+- **`ConsumerName`** identifica o processo físico dentro do grupo (aparece no `XPENDING`). Com uma única instância da aplicação, qualquer valor fixo serve. **Decisão pendente:** se escalar pra múltiplas instâncias, precisa ser único por processo (ex: hostname + PID) — do contrário o Redis não distingue os processos.
+- Log `"consumer alert: fila vazia"` aparecendo repetidamente (a cada ~2s) é comportamento esperado do `runConsumeLoop`, não erro — é o `XReadGroup` retornando vazio a cada tentativa de bloqueio, enquanto nenhuma anomalia real acontece.
+
+### `usecase.GetQueryUseCase.Execute` — busca individual
+- O mais simples dos três usecases: só repassa pra `repository.GetByID`, sem transformação nenhuma. Existe mesmo assim (em vez do handler chamar o repository direto) pra manter a porta de entrada única — espaço pra crescer regra depois (cache, log de acesso) sem precisar desacoplar o handler retroativamente.
+- Handler `GetQueryById` usa **path params** (`ctx.Param`, não `ctx.Query`) pros dois segmentos da identidade: `/queries/:queryID/:dbUser` — reflete que os dois juntos formam a chave, nenhum dos dois é opcional.
+- `domain.ErrQueryNotFound` → `404`; qualquer outro erro → `500`; sucesso → `200` com `mapToSlowQueryResponse` (singular, sem loop).
+- **Bug real que já caímos aqui:** `ctx.JSON` não interrompe a execução da função — sem `return` logo depois de cada resposta de erro, o handler continua rodando as linhas seguintes e tenta escrever múltiplas respostas na mesma requisição (o Gin não impede, só loga aviso e o comportamento fica imprevisível). Regra fixa: todo `ctx.JSON` de erro precisa de `return` na sequência, sem exceção.
+
 ### `adapter/http` — handler + DTO
-- **DTO (`SlowQueryResponse`) separado da entidade `domain.Query`** — decisão consciente (Opção B, mais rigorosa) pra não vazar tags `json:` pro domínio. `mapToSlowQueryResponseList` faz a tradução.
+- **DTO (`SlowQueryResponse`) separado da entidade `domain.Query`** — decisão consciente (Opção B, mais rigorosa) pra não vazar tags `json:` pro domínio. `mapToSlowQueryResponseList` (plural) e `mapToSlowQueryResponse` (singular) fazem a tradução — uma pra lista, outra pra registro único.
 - **`LastExecutionAt` no DTO é `time.Time` puro; `LastAnomalyAt` é `*time.Time`** — espelha exatamente os tipos da entidade (o primeiro sempre preenchido, o segundo nullable).
-- **`limit` como query string (`?limit=10`), não path param** — path param representa identidade de recurso (`/queries/{id}`), query string representa modificador opcional sobre uma coleção. Também mais natural pra ter valor padrão e crescer com mais filtros no futuro (`offset`, `sort`) sem quebrar a URL.
+- **`limit` como query string (`?limit=10`)**, mas **`queryID`/`dbUser` como path params (`/queries/:queryID/:dbUser`)** — a distinção que importa: query string é modificador opcional sobre uma coleção; path param é identidade obrigatória do recurso. Como a identidade real de uma `Query` é o par `(queryID, dbUser)`, os dois entram como segmentos de path, não como query string.
 - Validação do `limit`: string vazia → default (10); não-numérico → `400`; `≤ 0` → `400`; acima do teto (100) → satura no teto, não erro.
+- **`GetQueryById`**: usa `ctx.Param()` (não `ctx.Query()`) pra extrair os dois segmentos. Traduz `domain.ErrQueryNotFound` pra `404` via `errors.Is` — erro esperado do domínio vira status HTTP específico, não um `500` genérico.
+- **Armadilha real que já caímos: `ctx.JSON` não interrompe a execução da função.** Sem `return` logo depois de cada `ctx.JSON` de erro, o código continua rodando as linhas seguintes — múltiplas respostas HTTP sendo escritas na mesma requisição, e possível nil pointer dereference ao tentar mapear uma query que na verdade é `nil` (busca falhou). Regra fixa: todo `ctx.JSON` de erro leva um `return` na linha de baixo, sem exceção.
 - `make([]SlowQueryResponse, len(...))` em vez de `var` — garante `[]` no JSON de resposta em vez de `null` quando a lista vem vazia.
-- Rota registrada via **method value** (`route.GET("/queries/slowest", h.GetSlowestQueries)`) — Go gera automaticamente a função "fechada" com o receiver já embutido, sem precisar de wrapper manual.
-- **Pendente:** handler de `GET /queries/{id}` (usaria `ctx.Param("id")`, diferente de `ctx.Query()`) ainda não escrito.
+- Rota registrada via **method value** (`route.GET("/queries/slowest", h.GetSlowestQueries)`) — Go gera automaticamente a função "fechada" com o receiver já embutido, sem precisar de wrapper manual. Importante: `h.Metodo` (sem parênteses) entrega a *referência*, executada a cada requisição; `h.Metodo()` (com parênteses) executaria uma vez só, na hora de registrar — erro de lógica grave se confundido.
+- **`GetQueryUseCase`** — usecase "passa-through" (só repassa pra `repository.GetByID`, sem lógica própria) — existe mesmo assim pra manter o handler sem acesso direto ao repository, preservando a porta de entrada única e o espaço pra crescer regra depois (cache, log de acesso, etc.).
 
 ### Lições gerais de Go que apareceram repetidas vezes nos adapters
 - **Nunca descartar erro com `_`** — mesmo em casos que "raramente falham" (ex: `json.Marshal`). O linter `errcheck` (parte do `golangci-lint`) pega isso.
@@ -262,15 +280,15 @@ Recebe `queryID`, `dbUser`, `normalizedQuery`, `executionTimeMs`. Fluxo: busca a
 12. ~~`usecase.ListSlowestQueriesUseCase` (cache-aside)~~ ✅
 13. ~~Wire completo no `main.go`~~ ✅
 14. ~~`adapter/worker.Collector` (lê `pg_stat_statements`, calcula delta, chama `Execute`)~~ ✅
-15. ~~`adapter/http` — handler `GET /queries/slowest` + DTO~~ ✅
-16. ~~Handler `GET /queries/{id}` — pendente, mesmo padrão do `/slowest` mas com `ctx.Param("id")`~~
-17. Filtro de auto-referência no coletor (excluir as próprias queries do sistema do resultado)
-18. `adapter/worker/` — consumidor de alertas (`XREADGROUP`) + "faxineiro" de pendências (`XPENDING`/`XCLAIM`) — ainda não iniciado
+15. ~~`adapter/http` — handler `GET /queries/slowest` + DTO~~ ✅ (testado e funcionando de ponta a ponta)
+16. ~~Handler `GET /queries/{queryID}/{dbUser}` (path params, identidade composta)~~ ✅ (testado e funcionando)
+17. ~~Filtro de auto-referência no coletor~~ ✅
+18. ~~`adapter/worker.AlertConsumer` — consumidor (`XReadGroup`) + "faxineiro" de pendências (`XAutoClaim`)~~ ✅ (testado e funcionando)
 19. Tabela + mapeamento usuário → contato (e-mail/Slack) — ainda em aberto conceitualmente
 20. Testes unitários (domain/usecase) + integração (`testcontainers-go` para Postgres)
 21. `golangci-lint` configurado
 22. `.github/workflows/ci.yml` — lint → testes → build da imagem Docker
-23. Graceful shutdown (`SIGTERM`/`SIGINT` fechando pool/client/coletor antes de encerrar)
+23. Graceful shutdown (`SIGTERM`/`SIGINT` fechando pool/client/coletor/consumidor antes de encerrar)
 24. README com diagrama de arquitetura + decisões documentadas (reaproveitar as justificativas deste guia)
 
 ---

@@ -33,7 +33,7 @@ func parseMapToAlert(values map[string]any) *redisadapter.AnomalyAlertResponse {
 		log.Printf("error na conversão: %v", err)
 	}
 
-	currentTimeMs, err := strconv.ParseFloat(fmt.Sprintf("%v", values["current_time_ms"]), 64)
+	currentTimeMs, err := strconv.ParseFloat(fmt.Sprintf("%v", values["current_time"]), 64)
 	if err != nil {
 		log.Printf("error na conversão: %v", err)
 	}
@@ -43,7 +43,7 @@ func parseMapToAlert(values map[string]any) *redisadapter.AnomalyAlertResponse {
 		log.Printf("error na conversão: %v", err)
 	}
 
-	deletedtAt, err := time.Parse(time.RFC3339, fmt.Sprintf("%v", values["detected_at"]))
+	detectedAt, err := time.Parse(time.RFC3339, fmt.Sprintf("%v", values["detected_at"]))
 	if err != nil {
 		log.Println("error na conversão:", err)
 	}
@@ -57,7 +57,7 @@ func parseMapToAlert(values map[string]any) *redisadapter.AnomalyAlertResponse {
 		ZScore:        zscore,
 		CurrentTimeMs: currentTimeMs,
 		MeanTimeMs:    meanTimeMs,
-		DetectedAt:    deletedtAt,
+		DetectedAt:    detectedAt,
 	}
 
 	return &data
@@ -147,6 +147,7 @@ func (a *AlertConsumer) ReclaimStale(ctx context.Context) {
 
 	if err != nil {
 		log.Printf("erro ao verificar mensagem pendentes: %v", err)
+		return
 	}
 
 	for _, message := range messages {
