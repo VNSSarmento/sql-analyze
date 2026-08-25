@@ -41,12 +41,6 @@ func (c *Collector) collectOnce(ctx context.Context) {
 		return
 	}
 
-	err = rows.Err()
-
-	if err != nil {
-		log.Printf("erro ao iterar resultados do pg_stat_statements: %v", err)
-	}
-
 	defer rows.Close()
 
 	for rows.Next() {
@@ -70,27 +64,26 @@ func (c *Collector) collectOnce(ctx context.Context) {
 
 		prevSnapshot, exist := c.snapshots[key]
 
-		callDelta := currentCalls - prevSnapshot.calls
-		timeDelta := currentTotalTime - prevSnapshot.totalExecTimeMs
+		if exist {
+			callDelta := currentCalls - prevSnapshot.calls
+			timeDelta := currentTotalTime - prevSnapshot.totalExecTimeMs
 
-		if !exist || callDelta <= 0 {
-			c.snapshots[key] = statSnapshot{
-				calls:           currentCalls,
-				totalExecTimeMs: currentTotalTime,
+			if callDelta > 0 {
+				avgTimeMs := timeDelta / float64(callDelta)
+
+				if err := c.analyzeUseCase.Execute(ctx, queryID, dbUser, normalizedQuery, avgTimeMs); err != nil {
+					log.Printf("work error: %v", err)
+				}
 			}
-			continue
 		}
 
-		avgTimeMs := timeDelta / float64(callDelta)
-
-		err = c.analyzeUseCase.Execute(ctx, queryID, dbUser, normalizedQuery, avgTimeMs)
-		if err != nil {
-			log.Printf("work error: %v", err)
-		}
-
-		c.snapshots[key] = statSnapshot{calls: callDelta, totalExecTimeMs: currentTotalTime}
-
+		c.snapshots[key] = statSnapshot{calls: currentCalls, totalExecTimeMs: currentTotalTime}
 	}
+
+	if err := rows.Err(); err != nil {
+		log.Printf("erro ao iterar resultados do pg_stat_statements: %v", err)
+	}
+
 }
 
 func (c *Collector) Start(ctx context.Context) {
