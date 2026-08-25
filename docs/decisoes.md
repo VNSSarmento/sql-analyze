@@ -178,7 +178,7 @@ Campos fechados: `QueryID`, `DBUser`, `CurrentTimeMs`, `MeanTimeMs` (adicionado 
 **Cuidado de nome:** usar `DBUser` (maiúsculo em "DB", seguindo convenção Go de siglas) em **todas** as structs do domínio — já caímos na inconsistência de ter `DbUser` numa struct e `DBUser` em outra.
 
 ### Rich Domain Model — o nome correto pro padrão aplicado
-O projeto usa **Clean/Hexagonal Architecture** com um **rich domain model** (regra de negócio como método da entidade — `Query.RegisterExecution`), não "DDD completo". DDD é um guarda-chuva maior (ubiquitous language, bounded contexts, aggregates, value objects, domain events) que o projeto não implementa formalmente, e não precisa. Frase defensável pra entrevista: *"Apliquei Clean Architecture com um domain model rico, onde as regras de negócio vivem como métodos da própria entidade, não espalhadas nos usecases."*
+O projeto usa **Clean/Hexagonal Architecture** com um **rich domain model** (regra de negócio como método da entidade — `Query.RegisterExecution`), não "DDD completo". DDD é um guarda-chuva maior (ubiquitous language, bounded contexts, aggregates, value objects, domain events) que o projeto não implementa formalmente, e não precisa.
 
 ### Em aberto — ainda não modelado
 - Tabela/mapeamento de **usuário do banco → contato real** (e-mail/Slack), pra notificar quem ainda não otimizou a query. `pg_stat_statements` dá o usuário do Postgres, não o contato — isso precisa de cadastro próprio.
