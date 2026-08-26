@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/mock"
 )
 
-func TestAnalyzeQueryUserCase(t *testing.T) {
+func TestAnalyzeQueryUseCase(t *testing.T) {
 	casos := []struct {
 		nome       string
 		execMs     float64
@@ -91,7 +91,7 @@ func TestAnalyzeQueryUserCase(t *testing.T) {
 
 			uc := NewAnalyzeQueryUseCase(repoMock, pubMock)
 
-			err := uc.Execute(context.Background(), "query-1", "admin", "selecet * from teste", teste.execMs)
+			err := uc.Execute(context.Background(), "query-1", "admin", "select * from teste", teste.execMs)
 
 			if teste.wantErr {
 				assert.Error(t, err)
