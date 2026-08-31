@@ -34,8 +34,9 @@ func main() {
 	}
 
 	repository := postgres.NewPostgresQueryRepository(bd.ConnPool)
-	analyzeUseCase := usecase.NewAnalyzeQueryUseCase(repository, alertPublisher)
+	contactRepository := postgres.NewContactRepository(bd.ConnPool)
 
+	analyzeUseCase := usecase.NewAnalyzeQueryUseCase(repository, alertPublisher)
 	queryCache := redisadapter.NewQueryCacheAdapter(redisConn.Client)
 	listSlowerUseCase := usecase.NewListSlowestQueriesUseCase(repository, queryCache)
 	getQueryUseCase := usecase.NewGetQueryUseCase(repository)
@@ -46,7 +47,7 @@ func main() {
 
 	go collector.Start(ctx)
 
-	alertConsumer := worker.NewAlertConsumer(redisConn.Client, "alert-consumer-1")
+	alertConsumer := worker.NewAlertConsumer(redisConn.Client, "alert-consumer-1", contactRepository)
 
 	go alertConsumer.Start(ctx)
 

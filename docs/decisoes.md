@@ -285,7 +285,7 @@ Recebe `queryID`, `dbUser`, `normalizedQuery`, `executionTimeMs`. Fluxo: busca a
 17. ~~Filtro de auto-referência no coletor~~ ✅
 18. ~~`adapter/worker.AlertConsumer` — consumidor (`XReadGroup`) + "faxineiro" de pendências (`XAutoClaim`)~~ ✅ (testado e funcionando)
 19. Tabela + mapeamento usuário → contato (e-mail/Slack) — ainda em aberto conceitualmente
-20. Testes unitários (domain/usecase) + integração (`testcontainers-go` para Postgres)
+20. ~~Testes unitários (domain/usecase) + integração (`testcontainers-go` para Postgres)~~
 21. `golangci-lint` configurado
 22. `.github/workflows/ci.yml` — lint → testes → build da imagem Docker
 23. Graceful shutdown (`SIGTERM`/`SIGINT` fechando pool/client/coletor/consumidor antes de encerrar)

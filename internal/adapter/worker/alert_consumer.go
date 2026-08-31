@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	redisadapter "sql-analyze/internal/adapter/redis_adapter"
+	"sql-analyze/internal/domain"
 	"strconv"
 	"time"
 
@@ -16,13 +17,15 @@ type AlertConsumer struct {
 	Client       *redis.Client
 	ConsumerName string
 	MinIdleTime  time.Duration
+	ContactRepo  domain.ContactRepository
 }
 
-func NewAlertConsumer(client *redis.Client, consumerName string) *AlertConsumer {
+func NewAlertConsumer(client *redis.Client, consumerName string, contactRepo domain.ContactRepository) *AlertConsumer {
 	return &AlertConsumer{
 		Client:       client,
 		ConsumerName: consumerName,
 		MinIdleTime:  time.Minute * 3,
+		ContactRepo:  contactRepo,
 	}
 }
 
@@ -94,9 +97,21 @@ func (a *AlertConsumer) ConsumeNew(ctx context.Context) {
 
 func (a *AlertConsumer) processMessage(ctx context.Context, messageID string, values map[string]any) {
 	alert := parseMapToAlert(values)
+	user, err := a.ContactRepo.GetByDBUser(ctx, alert.DBUser)
+
+	if errors.Is(err, domain.ErrContactNotFound) {
+		log.Printf("sem contato cadastrado")
+	}
+
+	if err != nil {
+		log.Printf("erro ao buscar o user:%v", err)
+	} else {
+		log.Printf("Alerta para %s(%s): query %s rodou %fms, %f desvios acima da media", user.DisplayName, user.Email, alert.QueryID, alert.MeanTimeMs, alert.ZScore)
+	}
+
 	log.Printf("Alerta recebido da query: %s", alert.QueryID)
 
-	err := a.Client.XAck(ctx, redisadapter.StreamName, redisadapter.GroupName, messageID).Err()
+	err = a.Client.XAck(ctx, redisadapter.StreamName, redisadapter.GroupName, messageID).Err()
 
 	if err != nil {
 		log.Printf("erro ao confirmar mensagem %s: %v", messageID, err)
