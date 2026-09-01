@@ -8,7 +8,7 @@ Material de consulta para continuar o desenvolvimento sozinho. Não contém cód
 
 Serviço em Go que conecta num Postgres via `pg_stat_statements`, detecta queries com comportamento anômalo (não só "lentas por um número fixo", mas por desvio do próprio histórico da query), expõe API REST, e usa Redis Streams para alertar de forma assíncrona e resiliente a falhas.
 
-**Objetivo do projeto:** fechar a lacuna de portfólio Go público, já que o projeto real (Campaign Manager) é trabalho de cliente sob NDA e não pode ser mostrado. Esse projeto reaproveita seu background de 4+ anos em análise de dados/SQL como diferencial real, não fictício.
+**Objetivo do projeto:** fechar a lacuna de portfólio Go público. Esse projeto reaproveita meu background de 4+ anos em análise de dados/SQL como diferencial real, não fictício.
 
 ---
 
