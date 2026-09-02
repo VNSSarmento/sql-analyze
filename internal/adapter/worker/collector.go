@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"sql-analyze/internal/usecase"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -86,7 +87,10 @@ func (c *Collector) collectOnce(ctx context.Context) {
 
 }
 
-func (c *Collector) Start(ctx context.Context) {
+func (c *Collector) Start(ctx context.Context, wg *sync.WaitGroup) {
+	wg.Add(1)
+	defer wg.Done()
+
 	ticker := time.NewTicker(c.interval)
 	defer ticker.Stop()
 
