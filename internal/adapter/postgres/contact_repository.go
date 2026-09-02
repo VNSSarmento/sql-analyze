@@ -19,7 +19,7 @@ func NewContactRepository(pool *pgxpool.Pool) *PostgresContactRepository {
 }
 
 func (p *PostgresContactRepository) GetByDBUser(ctx context.Context, dbUser string) (*domain.UserContact, error) {
-	sql := "SELECT db_user,email,display_name,created_at FROM user_contacts WHERE db_user = $1"
+	sql := "SELECT db_user,email,display_name FROM user_contacts WHERE db_user = $1"
 
 	userContact := &domain.UserContact{}
 
@@ -36,7 +36,7 @@ func (p *PostgresContactRepository) GetByDBUser(ctx context.Context, dbUser stri
 	}
 
 	if err != nil {
-		err := fmt.Errorf("buscando query: %w", err)
+		err := fmt.Errorf("buscando contato: %w", err)
 
 		return nil, err
 	}

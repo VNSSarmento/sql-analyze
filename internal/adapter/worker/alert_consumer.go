@@ -8,6 +8,7 @@ import (
 	redisadapter "sql-analyze/internal/adapter/redis_adapter"
 	"sql-analyze/internal/domain"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -99,17 +100,15 @@ func (a *AlertConsumer) processMessage(ctx context.Context, messageID string, va
 	alert := parseMapToAlert(values)
 	user, err := a.ContactRepo.GetByDBUser(ctx, alert.DBUser)
 
-	if errors.Is(err, domain.ErrContactNotFound) {
-		log.Printf("sem contato cadastrado")
+	switch {
+	case errors.Is(err, domain.ErrContactNotFound):
+		log.Printf("Alerta da query %s (usuário %s): sem contato cadastrado", alert.QueryID, alert.DBUser)
+	case err != nil:
+		log.Printf("erro ao buscar contato do usuário %s: %v", alert.DBUser, err)
+	default:
+		log.Printf("Alerta para %s (%s): query %s rodou %.2fms (média histórica %.2fms), %.2f desvios acima da média",
+			user.DisplayName, user.Email, alert.QueryID, alert.CurrentTimeMs, alert.MeanTimeMs, alert.ZScore)
 	}
-
-	if err != nil {
-		log.Printf("erro ao buscar o user:%v", err)
-	} else {
-		log.Printf("Alerta para %s(%s): query %s rodou %fms, %f desvios acima da media", user.DisplayName, user.Email, alert.QueryID, alert.MeanTimeMs, alert.ZScore)
-	}
-
-	log.Printf("Alerta recebido da query: %s", alert.QueryID)
 
 	err = a.Client.XAck(ctx, redisadapter.StreamName, redisadapter.GroupName, messageID).Err()
 
@@ -118,9 +117,18 @@ func (a *AlertConsumer) processMessage(ctx context.Context, messageID string, va
 	}
 }
 
-func (a *AlertConsumer) Start(ctx context.Context) {
-	go a.runConsumeLoop(ctx)
-	go a.runCleanupLoop(ctx)
+func (a *AlertConsumer) Start(ctx context.Context, wg *sync.WaitGroup) {
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		a.runConsumeLoop(ctx)
+	}()
+
+	go func() {
+		defer wg.Done()
+		a.runCleanupLoop(ctx)
+	}()
 }
 
 func (a *AlertConsumer) runConsumeLoop(ctx context.Context) {

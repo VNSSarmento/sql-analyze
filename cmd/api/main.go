@@ -4,12 +4,16 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
 	"sql-analyze/internal/adapter/http/handler"
 	"sql-analyze/internal/adapter/postgres"
 	redisadapter "sql-analyze/internal/adapter/redis_adapter"
 	"sql-analyze/internal/adapter/worker"
 	"sql-analyze/internal/config"
 	"sql-analyze/internal/usecase"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -17,7 +21,9 @@ import (
 )
 
 func main() {
-	ctx := context.Background()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	collectInterval := time.Minute * 2
 
 	if err := godotenv.Load(); err != nil {
@@ -44,12 +50,12 @@ func main() {
 	h := handler.NewHandler(analyzeUseCase, listSlowerUseCase, getQueryUseCase)
 
 	collector := worker.NewCollector(bd.ConnPool, analyzeUseCase, collectInterval)
-
-	go collector.Start(ctx)
-
 	alertConsumer := worker.NewAlertConsumer(redisConn.Client, "alert-consumer-1", contactRepository)
 
-	go alertConsumer.Start(ctx)
+	var wg sync.WaitGroup
+
+	go collector.Start(ctx, &wg)
+	go alertConsumer.Start(ctx, &wg)
 
 	route := gin.Default()
 
@@ -60,5 +66,30 @@ func main() {
 	route.GET("/queries/slowest", h.GetSlowestQueries)
 	route.GET("/queries/:queryID/:dbUser", h.GetQueryById)
 
-	route.Run()
+	srv := &http.Server{Addr: ":8080", Handler: route}
+
+	go func() {
+		err := srv.ListenAndServe()
+
+		if err != nil && err != http.ErrServerClosed {
+			log.Fatalf("erro no servidor HTTP: %v", err)
+		}
+	}()
+
+	<-ctx.Done()
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Printf("erro ao encerrar servidor HTTP: %v", err)
+	}
+
+	wg.Wait()
+
+	bd.ConnPool.Close()
+
+	if err := redisConn.Client.Close(); err != nil {
+		log.Printf("erro ao fechar client Redis: %v", err)
+	}
 }
