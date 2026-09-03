@@ -1,0 +1,13 @@
+name: test burro
+
+on:
+  push:
+
+  pull_request:
+
+jobs:
+  lint:
+
+  test:
+
+  build:
