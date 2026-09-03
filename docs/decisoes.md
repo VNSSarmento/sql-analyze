@@ -1,14 +1,10 @@
 # Guia de referência — SQL Query Performance Analyzer
 
-Material de consulta para continuar o desenvolvimento sozinho. Não contém código Go pronto (isso é pra você escrever) — só decisões, comandos, e o "porquê" de cada escolha, pra você não precisar reconstruir o raciocínio do zero.
-
----
-
 ## 1. Visão geral do projeto
 
 Serviço em Go que conecta num Postgres via `pg_stat_statements`, detecta queries com comportamento anômalo (não só "lentas por um número fixo", mas por desvio do próprio histórico da query), expõe API REST, e usa Redis Streams para alertar de forma assíncrona e resiliente a falhas.
 
-**Objetivo do projeto:** fechar a lacuna de portfólio Go público. Esse projeto reaproveita meu background de 4+ anos em análise de dados/SQL como diferencial real, não fictício.
+**Objetivo do projeto:** fechar a lacuna de portfólio Go público, já que o projeto real (Campaign Manager) é trabalho de cliente sob NDA e não pode ser mostrado. Esse projeto reaproveita seu background de 4+ anos em análise de dados/SQL como diferencial real, não fictício.
 
 ---
 
@@ -178,7 +174,7 @@ Campos fechados: `QueryID`, `DBUser`, `CurrentTimeMs`, `MeanTimeMs` (adicionado 
 **Cuidado de nome:** usar `DBUser` (maiúsculo em "DB", seguindo convenção Go de siglas) em **todas** as structs do domínio — já caímos na inconsistência de ter `DbUser` numa struct e `DBUser` em outra.
 
 ### Rich Domain Model — o nome correto pro padrão aplicado
-O projeto usa **Clean/Hexagonal Architecture** com um **rich domain model** (regra de negócio como método da entidade — `Query.RegisterExecution`), não "DDD completo". DDD é um guarda-chuva maior (ubiquitous language, bounded contexts, aggregates, value objects, domain events) que o projeto não implementa formalmente, e não precisa.
+O projeto usa **Clean/Hexagonal Architecture** com um **rich domain model** (regra de negócio como método da entidade — `Query.RegisterExecution`), não "DDD completo". DDD é um guarda-chuva maior (ubiquitous language, bounded contexts, aggregates, value objects, domain events) que o projeto não implementa formalmente, e não precisa. Frase defensável pra entrevista: *"Apliquei Clean Architecture com um domain model rico, onde as regras de negócio vivem como métodos da própria entidade, não espalhadas nos usecases."*
 
 ### Em aberto — ainda não modelado
 - Tabela/mapeamento de **usuário do banco → contato real** (e-mail/Slack), pra notificar quem ainda não otimizou a query. `pg_stat_statements` dá o usuário do Postgres, não o contato — isso precisa de cadastro próprio.
@@ -284,12 +280,12 @@ Recebe `queryID`, `dbUser`, `normalizedQuery`, `executionTimeMs`. Fluxo: busca a
 16. ~~Handler `GET /queries/{queryID}/{dbUser}` (path params, identidade composta)~~ ✅ (testado e funcionando)
 17. ~~Filtro de auto-referência no coletor~~ ✅
 18. ~~`adapter/worker.AlertConsumer` — consumidor (`XReadGroup`) + "faxineiro" de pendências (`XAutoClaim`)~~ ✅ (testado e funcionando)
-19. Tabela + mapeamento usuário → contato (e-mail/Slack) — ainda em aberto conceitualmente
-20. ~~Testes unitários (domain/usecase) + integração (`testcontainers-go` para Postgres)~~
-21. `golangci-lint` configurado
-22. `.github/workflows/ci.yml` — lint → testes → build da imagem Docker
-23. Graceful shutdown (`SIGTERM`/`SIGINT` fechando pool/client/coletor/consumidor antes de encerrar)
-24. README com diagrama de arquitetura + decisões documentadas (reaproveitar as justificativas deste guia)
+19. ~~Tabela + mapeamento usuário → contato (e-mail/Slack)~~ ✅ (resolução de contato + log acionável; sem envio real ainda — escopo consciente)
+20. ~~Testes unitários (domain/usecase, com testify/mock)~~ ✅ — testes de integração (`testcontainers-go` para Postgres) ainda não feitos, stretch goal
+21. ~~`golangci-lint` configurado (`.golangci.yml`)~~ ✅
+22. ~~`.github/workflows/ci.yml` — lint → testes (`-race`) → build da imagem Docker~~ ✅ (rodando de ponta a ponta)
+23. ~~Graceful shutdown (`SIGTERM`/`SIGINT`, `sync.WaitGroup`, `http.Server.Shutdown`)~~ ✅
+24. ~~README com diagrama de arquitetura + decisões documentadas (reaproveitar as justificativas deste guia)~~
 
 ---
 
@@ -356,4 +352,41 @@ docker exec -it redis-sql_analyze redis-cli
 
 ---
 
-*Documento gerado a partir das decisões tomadas em conversa com Claude — sirva como ponto de partida, não como verdade absoluta. Se uma decisão aqui parar de fazer sentido conforme o projeto evolui, documente o porquê da mudança também.*
+## 11. Testes, graceful shutdown e CI/CD
+
+### Testes unitários — domain e usecases
+- **`domain` puro primeiro** (`Query.RegisterExecution`) — sem mocks, sem infraestrutura, só monta o struct com valores e chama o método. Ponto de partida certo: mais rápido de escrever, mais rápido de rodar, cobre a lógica mais crítica (Welford's/z-score).
+- **Table-driven tests** — padrão idiomático Go: slice de structs anônimos (cada um um cenário), percorrido com `for range` + `t.Run(caso.nome, func(t *testing.T) {...})`. `t.Run` isola falhas por subteste e permite rodar um caso específico (`go test -run Teste/nome_do_caso`).
+- **`assert.InDelta`** (testify) pra comparar `float64` — nunca `assert.Equal` direto em resultado de conta, por causa de imprecisão de ponto flutuante.
+- **Armadilha real:** `ZScore` no `ExecutionResult` só é preenchido quando `IsAnomaly == true` — testar "execução normal" esperando o z-score calculado (não-zero) dá falso negativo no teste. O campo é "motivo do alerta", não "z-score sempre presente".
+- **Mocks com `testify/mock`** pros usecases (`AnalyzeQueryUseCase`, `ListSlowestQueriesUseCase`) — preferido a fakes manuais porque é o que mais aparece em vaga backend Go. Padrão de cada método mockado: `args := m.Called(...)`, extrai cada retorno por posição (`args.Get(0)`, `args.Error(1)`), com `if args.Get(0) != nil` antes de type assertion em ponteiro/slice (evita panic em cenário de retorno nulo).
+- **`.On(...).Return(...)` configura por cenário**, e a **ausência** de um `.On(...)` funciona como asserção implícita — se o código chamar um método não configurado, o mock gera panic, pegando bugs tipo "publicou alerta quando não devia".
+- **`mocks_test.go` separado da tabela de teste** — arquivos `_test.go` nunca entram no binário de produção (`go build` ignora), então a dependência `testify` não polui o binário real.
+- **`repoMock.AssertExpectations(t)` no final de cada subteste** — confirma que todo `.On(...)` registrado foi de fato chamado, não só que o resultado bateu.
+
+### Graceful shutdown
+- **`signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)`** — substitui o `context.Background()` "eterno" por um `ctx` que cancela sozinho ao receber sinal do SO (o que o Docker manda antes de matar o container).
+- **`route.Run()` do Gin não aceita `ctx`** — precisa virar `http.Server{Addr, Handler}` explícito, rodando `ListenAndServe()` em goroutine própria, pra ter acesso a `srv.Shutdown(ctx)` (só esse tipo desliga aceitando terminar requisições em andamento, com timeout).
+- **`sync.WaitGroup` — regra de ouro: `Add()` sempre síncrono, antes de qualquer `go`.** Erro real cometido: `wg.Add(1)` dentro de uma função chamada como `go funcao(&wg)` — o `go` já libera o `main()` pra seguir em frente sem garantia de que o `Add` rodou antes. Correção: o `go` que dispara a goroutine de trabalho fica **dentro** do método `Start`, e o `Start` em si é chamado **sem** `go` na frente (ele mesmo já dispara a goroutine internamente, depois do `Add` síncrono).
+- **Ordem do desligamento:** `srv.Shutdown` (para de aceitar HTTP novo) → `wg.Wait()` (espera coletor/consumidor confirmarem que pararam) → `pool.Close()` / `client.Close()` (só depois que ninguém mais usa). Fechar conexões antes de esperar as goroutines geraria erro de "conexão fechada" no meio de uma operação em andamento.
+
+### `golangci-lint` — `.golangci.yml`
+Linters habilitados cobrindo as lições já aprendidas na prática: `errcheck` (erro descartado), `revive` (convenção de nome, `ID` vs `Id`), `staticcheck` (bugs sutis), `govet`, `unused` (código morto — pegou uma função de mapeamento (`mapAnomalyAlertResponse`) que tinha ficado órfã depois de mudar de abordagem, nunca chamada por ninguém).
+
+### `.github/workflows/ci.yml` — três jobs paralelos/dependentes
+- **`lint`**, **`test`** (com `go test -race ./...` — detector de corrida de dados, relevante porque o projeto usa `sync.WaitGroup`/goroutines de verdade) e **`build`** (builda a imagem Docker) — os dois primeiros em paralelo, o terceiro com `needs: [lint, test]`, só roda se os dois passarem.
+- **`go-version-file: go.mod`** no `setup-go`, em vez de número fixo — nunca dessincroniza da versão real do projeto.
+
+### Troubleshooting de CI — cadeia de versões desalinhadas
+Sintoma inicial: `golangci-lint` falhando com *"the Go language version (go1.24) used to build golangci-lint is lower than the targeted Go version (1.26.0)"*.
+
+1. **`go.mod` em `1.26.0` não era bug, era exigência real de uma dependência** — desde Go 1.21, seu módulo precisa declarar uma versão mínima ≥ a de qualquer dependência. Tentar forçar pra baixo (`go mod edit -go=1.23`) não resolve: `go mod tidy`/`go build` reajustam sozinhos de volta, sempre. **Lição: não lutar contra isso — aceitar a versão que as dependências exigem.**
+2. **`golangci-lint` só analisa código com versão de Go ≤ à versão usada pra compilar o próprio `golangci-lint`.** A linha v1 (última: `1.64.8`) não suporta Go 1.26 — suporte só chegou na linha v2 (`v2.9.0+`). Correção: fixar `version: v2.9.0` no step.
+3. **`golangci-lint-action@v6` não sabe instalar `golangci-lint` v2** — erro `"golangci-lint v2 is not supported by golangci-lint-action v6, you must update to golangci-lint-action v7"`. Duas ferramentas com versionamento independente (a action que baixa/roda ≠ a ferramenta em si); o wrapper sempre fica um passo atrás. Correção: `uses: golangci/golangci-lint-action@v7`.
+4. **Dockerfile com `FROM golang:1.25` falhando no `go mod download`** dentro do CI — mesma causa raiz: imagem base com toolchain menor que o `go.mod` exige, tentando baixar toolchain `1.26` automaticamente pela rede em ambiente de build (falha por restrição de rede/timeout). Correção: `FROM golang:1.26`, imagem já com a versão certa, sem download extra em build time.
+
+**Padrão geral por trás dos 4 problemas:** uma cadeia de ferramentas (Go, golangci-lint, golangci-lint-action, imagem base Docker) cada uma com seu próprio ciclo de release — quando uma sobe de versão (aqui, a exigência de Go 1.26 propagada por dependência), todo o resto da cadeia precisa ser conferido, não só a peça que gerou o erro original.
+
+---
+
+*Documento gerado a partir das decisões tomadas em conversa com Claude — sirva como ponto de partida, não como verdade absoluta. Algumas deciões foram documentadas conforme o projeto evoluiu e algumas discordâncias que tive com Claude que fizeram mais sentido na evolução do projeto.*
