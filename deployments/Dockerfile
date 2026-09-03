@@ -1,5 +1,5 @@
 # ESTÁGIO 1: Build
-FROM golang:1.25 AS construtor
+FROM golang:1.26 AS construtor
 
 WORKDIR /app
 

@@ -54,8 +54,8 @@ func main() {
 
 	var wg sync.WaitGroup
 
-	go collector.Start(ctx, &wg)
-	go alertConsumer.Start(ctx, &wg)
+	collector.Start(ctx, &wg)
+	alertConsumer.Start(ctx, &wg)
 
 	route := gin.Default()
 

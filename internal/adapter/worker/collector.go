@@ -89,17 +89,20 @@ func (c *Collector) collectOnce(ctx context.Context) {
 
 func (c *Collector) Start(ctx context.Context, wg *sync.WaitGroup) {
 	wg.Add(1)
-	defer wg.Done()
+	go func() {
+		defer wg.Done()
 
-	ticker := time.NewTicker(c.interval)
-	defer ticker.Stop()
+		ticker := time.NewTicker(c.interval)
 
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			c.collectOnce(ctx)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				c.collectOnce(ctx)
+			}
 		}
-	}
+	}()
 }
