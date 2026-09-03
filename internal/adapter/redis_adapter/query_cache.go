@@ -53,6 +53,7 @@ func (c *QueryCacheAdapter) GetSlowest(ctx context.Context, limit int) ([]*domai
 	err = json.Unmarshal([]byte(result), &queries)
 
 	if err != nil {
+
 		return nil, fmt.Errorf("failed to unmarshal cached queries: %w", err)
 	}
 
